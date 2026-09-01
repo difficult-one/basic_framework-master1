@@ -1,0 +1,4 @@
+loadfile build/basic_framework.hex
+r
+g
+exit

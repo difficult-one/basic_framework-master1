@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmd.exe /c \"\\\\\"D:\\\\\\\\hanako\\\\\\\\xpack-openocd-0.12.0-7\\\\\\\\bin\\\\\\\\openocd.exe\\\\\" -f \\\\\"d:\\\\\\\\hanako\\\\\\\\basic_framework-master1\\\\\\\\openocd_dap.cfg\\\\\" -c \\\\\"init\\\\\" -c \\\\\"shutdown\\\\\" 2>&1\")"
+    ]
+  }
+}

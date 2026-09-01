@@ -1,0 +1,58 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build task",
+            "type": "shell",
+            "command": "mingw32-make -j8",
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "download dap",
+            "type": "shell",
+            "command": "mingw32-make -j8 && mingw32-make download_dap",
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "options": {
+                "shell": {
+                    "executable": "cmd.exe",
+                    "args": ["/d", "/c"]
+                },
+                "env": {
+                    "PATH": "D:\\hanako\\xpack-openocd-0.12.0-7\\bin;${env:PATH}"
+                }
+            }
+        },
+        {
+            "label": "download jlink",
+            "type": "shell",
+            "command": "mingw32-make -j8 && mingw32-make download_jlink",
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "options": {
+                "shell": {
+                    "executable": "cmd.exe",
+                    "args": ["/d", "/c"]
+                },
+                "env": {
+                    "PATH": "D:\\SEGGER\\JLink;D:\\SEGGER\\JLink CONFIRM=1\\JLink_V960;${env:PATH}"
+                }
+            }
+        },
+        {
+            "label": "log",
+            "type": "shell",
+            "command": "JlinkRTTClient",
+            "args": [],
+            "problemMatcher": []
+        }
+    ]
+}
