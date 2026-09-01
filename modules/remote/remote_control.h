@@ -23,7 +23,7 @@
 
 // 获取按键操作
 #define KEY_PRESS 0
-#define KEY_STATE 1
+#define KEY_STATE KEY_PRESS
 #define KEY_PRESS_WITH_CTRL 1
 #define KEY_PRESS_WITH_SHIFT 2
 
@@ -129,5 +129,10 @@ RC_ctrl_t *RemoteControlInit(UART_HandleTypeDef *rc_usart_handle);
  * @return uint8_t 1:在线 0:离线
  */
 uint8_t RemoteControlIsOnline();
+
+/**
+ * @brief 是否至少收到并解析过一帧遥控器数据
+ */
+uint8_t RemoteControlHasReceivedFrame(void);
 
 #endif

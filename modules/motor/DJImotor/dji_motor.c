@@ -164,6 +164,7 @@ static void DecodeDJIMotor(CANInstance *_instance)
     DJIMotorInstance *motor = (DJIMotorInstance *)_instance->id;
     DJI_Motor_Measure_s *measure = &motor->measure; // measure要多次使用,保存指针减小访存开销
 
+    motor->feedback_received = 1;
     DaemonReload(motor->daemon);
     motor->dt = DWT_GetDeltaT(&motor->feed_cnt);
 
@@ -252,6 +253,11 @@ void DJIMotorStop(DJIMotorInstance *motor)
 void DJIMotorEnable(DJIMotorInstance *motor)
 {
     motor->stop_flag = MOTOR_ENALBED;
+}
+
+uint8_t DJIMotorIsOnline(const DJIMotorInstance *motor)
+{
+    return motor != NULL && motor->feedback_received && DaemonIsOnline(motor->daemon);
 }
 
 /* 修改电机的实际闭环对象 */

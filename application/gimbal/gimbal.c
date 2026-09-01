@@ -5,6 +5,8 @@
 #include "message_center.h"
 #include "general_def.h"
 #include "bmi088.h"
+#include "infantry_control.h"
+#include <math.h>
 
 static attitude_t *gimba_IMU_data; // 云台IMU数据
 static DJIMotorInstance *yaw_motor, *pitch_motor;
@@ -23,8 +25,8 @@ void GimbalInit()
     // YAW
     Motor_Init_Config_s yaw_config = {
         .can_init_config = {
-            .can_handle = &hcan1,
-            .tx_id = 1,
+            .can_handle = GIMBAL_YAW_MOTOR_CAN_HANDLE,
+            .tx_id = GIMBAL_YAW_MOTOR_ID,
         },
         .controller_param_init_config = {
             .angle_PID = {
@@ -55,15 +57,15 @@ void GimbalInit()
             .speed_feedback_source = OTHER_FEED,
             .outer_loop_type = ANGLE_LOOP,
             .close_loop_type = ANGLE_LOOP | SPEED_LOOP,
-            .motor_reverse_flag = MOTOR_DIRECTION_NORMAL,
+            .motor_reverse_flag = GIMBAL_YAW_MOTOR_REVERSE ? MOTOR_DIRECTION_REVERSE : MOTOR_DIRECTION_NORMAL,
             .feedforward_flag = SPEED_FEEDFORWARD,  // 开启速度前馈
         },
-        .motor_type = GM6020};
+        .motor_type = GIMBAL_MOTOR_TYPE};
     // PITCH
     Motor_Init_Config_s pitch_config = {
         .can_init_config = {
-            .can_handle = &hcan2,
-            .tx_id = 2,
+            .can_handle = GIMBAL_PITCH_MOTOR_CAN_HANDLE,
+            .tx_id = GIMBAL_PITCH_MOTOR_ID,
         },
         .controller_param_init_config = {
             .angle_PID = {
@@ -91,13 +93,16 @@ void GimbalInit()
             .speed_feedback_source = OTHER_FEED,
             .outer_loop_type = ANGLE_LOOP,
             .close_loop_type = SPEED_LOOP | ANGLE_LOOP,
-            .motor_reverse_flag = MOTOR_DIRECTION_NORMAL,
+            .motor_reverse_flag = GIMBAL_PITCH_MOTOR_REVERSE ? MOTOR_DIRECTION_REVERSE : MOTOR_DIRECTION_NORMAL,
         },
-        .motor_type = GM6020,
+        .motor_type = GIMBAL_MOTOR_TYPE,
     };
     // 电机对total_angle闭环,上电时为零,会保持静止,收到遥控器数据再动
     yaw_motor = DJIMotorInit(&yaw_config);
     pitch_motor = DJIMotorInit(&pitch_config);
+    // DJIMotorInit默认使能。调度器启动前先停机，避免IMU目标尚未捕获时追零。
+    DJIMotorStop(yaw_motor);
+    DJIMotorStop(pitch_motor);
 
     gimbal_pub = PubRegister("gimbal_feed", sizeof(Gimbal_Upload_Data_s));
     gimbal_sub = SubRegister("gimbal_cmd", sizeof(Gimbal_Ctrl_Cmd_s));
@@ -110,9 +115,24 @@ void GimbalTask()
     // 后续增加未收到数据的处理
     SubGetMessage(gimbal_sub, &gimbal_cmd_recv);
 
+    const uint8_t ready_states[3] = {
+        DJIMotorIsOnline(yaw_motor),
+        DJIMotorIsOnline(pitch_motor),
+        INS_IsReady() && isfinite(gimba_IMU_data->YawTotalAngle) &&
+            isfinite(gimba_IMU_data->Pitch) &&
+            isfinite(gimba_IMU_data->Gyro[0]) &&
+            isfinite(gimba_IMU_data->Gyro[2]),
+    };
+    gimbal_feedback_data.gimbal_ready = InfantryAllReady(ready_states, 3);
+
     // @todo:现在已不再需要电机反馈,实际上可以始终使用IMU的姿态数据来作为云台的反馈,yaw电机的offset只是用来跟随底盘
     // 根据控制模式进行电机反馈切换和过渡,视觉模式在robot_cmd模块就已经设置好,gimbal只看yaw_ref和pitch_ref
-    switch (gimbal_cmd_recv.gimbal_mode)
+    if (!gimbal_feedback_data.gimbal_ready)
+    {
+        DJIMotorStop(yaw_motor);
+        DJIMotorStop(pitch_motor);
+    }
+    else switch (gimbal_cmd_recv.gimbal_mode)
     {
     // 停止
     case GIMBAL_ZERO_FORCE:

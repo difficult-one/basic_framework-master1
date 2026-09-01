@@ -22,3 +22,25 @@
 ### 后续支持平衡底盘
 
 新增一个app balance_chassis
+
+## 四轮方向验证
+
+首次上车前必须把底盘悬空，并在 `application/robot_def.h` 中把
+`CHASSIS_WHEEL_TEST_MODE` 设置为 `CHASSIS_WHEEL_TEST_ENABLE`。随后分别将
+`CHASSIS_WHEEL_TEST_TARGET` 设置为：
+
+1. `CHASSIS_WHEEL_TEST_LF`：左前轮；
+2. `CHASSIS_WHEEL_TEST_RF`：右前轮；
+3. `CHASSIS_WHEEL_TEST_LB`：左后轮；
+4. `CHASSIS_WHEEL_TEST_RB`：右后轮。
+
+每次只编译并验证一只轮子，其余三只轮子的目标速度为零。USART2 会输出
+`wheel`、`target`、`speed` 和 `current`，用于核对物理位置、CAN ID 和方向。
+如果目标为正而反馈方向相反，应修改该轮的 `CHASSIS_MOTOR_*_REVERSE`，不要在
+运动学公式中临时改符号。四轮全部确认后，必须把测试模式恢复为
+`CHASSIS_WHEEL_TEST_DISABLE`，再进行正常麦轮运动测试。
+
+轮测模式仍受遥控器首帧校验、掉线急停和四台底盘电机反馈在线状态约束；任一条件
+不满足时测试轮目标为零。运动学解算后的四轮目标会按比例限制在
+`CHASSIS_MAX_WHEEL_SPEED_APS` 内，小陀螺输出也受
+`CHASSIS_ROTATE_OUTPUT_MAX_WZ` 限制。

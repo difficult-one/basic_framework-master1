@@ -92,6 +92,11 @@ attitude_t *INS_Init(void);
 void INS_Task(void);
 
 /**
+ * @brief INS是否至少完成过一次姿态更新
+ */
+uint8_t INS_IsReady(void);
+
+/**
  * @brief 四元数更新函数,即实现dq/dt=0.5Ωq
  *
  * @param q  四元数

@@ -5,12 +5,14 @@
 #include "stdlib.h"
 #include "daemon.h"
 #include "bsp_log.h"
+#include "remote_control_protocol.h"
 
 #define REMOTE_CONTROL_FRAME_SIZE 18u // 遥控器接收的buffer大小
 
 // 遥控器数据
  RC_ctrl_t rc_ctrl[2];     //[0]:当前数据TEMP,[1]:上一次的数据LAST.用于按键持续按下和切换的判断
 static uint8_t rc_init_flag = 0; // 遥控器初始化标志位
+static uint8_t rc_frame_received = 0;
 
 // 遥控器拥有的串口实例,因为遥控器是单例,所以这里只有一个,就不封装了
 static USARTInstance *rc_usart_instance;
@@ -32,7 +34,7 @@ static void RectifyRCjoystick()
  *
  * @param sbus_buf 接收buffer
  */
-static void sbus_to_rc(const uint8_t *sbus_buf)
+static uint8_t sbus_to_rc(const uint8_t *sbus_buf)
 {
     // 摇杆,直接解算时减去偏置
     rc_ctrl[TEMP].rc.rocker_r_ = ((sbus_buf[0] | (sbus_buf[1] << 8)) & 0x07ff) - RC_CH_VALUE_OFFSET;                              //!< Channel 0
@@ -40,10 +42,22 @@ static void sbus_to_rc(const uint8_t *sbus_buf)
     rc_ctrl[TEMP].rc.rocker_l_ = (((sbus_buf[2] >> 6) | (sbus_buf[3] << 2) | (sbus_buf[4] << 10)) & 0x07ff) - RC_CH_VALUE_OFFSET; //!< Channel 2
     rc_ctrl[TEMP].rc.rocker_l1 = (((sbus_buf[4] >> 1) | (sbus_buf[5] << 7)) & 0x07ff) - RC_CH_VALUE_OFFSET;                       //!< Channel 3
     rc_ctrl[TEMP].rc.dial = ((sbus_buf[16] | (sbus_buf[17] << 8)) & 0x07FF) - RC_CH_VALUE_OFFSET;                                 // 左侧拨轮
-    RectifyRCjoystick();
     // 开关,0左1右
     rc_ctrl[TEMP].rc.switch_right = ((sbus_buf[5] >> 4) & 0x0003);     //!< Switch right
     rc_ctrl[TEMP].rc.switch_left = ((sbus_buf[5] >> 4) & 0x000C) >> 2; //!< Switch left
+
+    const int16_t channels[5] = {
+        rc_ctrl[TEMP].rc.rocker_l_,
+        rc_ctrl[TEMP].rc.rocker_l1,
+        rc_ctrl[TEMP].rc.rocker_r_,
+        rc_ctrl[TEMP].rc.rocker_r1,
+        rc_ctrl[TEMP].rc.dial,
+    };
+    if (!RemoteControlValuesValid(channels,
+                                  rc_ctrl[TEMP].rc.switch_left,
+                                  rc_ctrl[TEMP].rc.switch_right))
+        return 0;
+    RectifyRCjoystick();
 
     // 鼠标解析
     rc_ctrl[TEMP].mouse.x = (sbus_buf[6] | (sbus_buf[7] << 8)); //!< Mouse X axis
@@ -85,6 +99,7 @@ static void sbus_to_rc(const uint8_t *sbus_buf)
     }
 
     memcpy(&rc_ctrl[LAST], &rc_ctrl[TEMP], sizeof(RC_ctrl_t)); // 保存上一次的数据,用于按键持续按下和切换的判断
+    return 1;
 }
 
 /**
@@ -93,8 +108,15 @@ static void sbus_to_rc(const uint8_t *sbus_buf)
  */
 static void RemoteControlRxCallback()
 {
-    DaemonReload(rc_daemon_instance);         // 先喂狗
-    sbus_to_rc(rc_usart_instance->recv_buff); // 进行协议解析
+    if (sbus_to_rc(rc_usart_instance->recv_buff))
+    {
+        rc_frame_received = 1;
+        DaemonReload(rc_daemon_instance);
+    }
+    else
+    {
+        rc_frame_received = 0;
+    }
 }
 
 /**
@@ -103,6 +125,7 @@ static void RemoteControlRxCallback()
  */
 static void RCLostCallback(void *id)
 {
+    rc_frame_received = 0;
     memset(rc_ctrl, 0, sizeof(rc_ctrl)); // 清空遥控器数据
     USARTServiceInit(rc_usart_instance); // 尝试重新启动接收
     LOGWARNING("[rc] remote control lost");
@@ -125,6 +148,7 @@ RC_ctrl_t *RemoteControlInit(UART_HandleTypeDef *rc_usart_handle)
     rc_daemon_instance = DaemonRegister(&daemon_conf);
 
     rc_init_flag = 1;
+    rc_frame_received = 0;
     return rc_ctrl;
 }
 
@@ -133,4 +157,9 @@ uint8_t RemoteControlIsOnline()
     if (rc_init_flag)
         return DaemonIsOnline(rc_daemon_instance);
     return 0;
+}
+
+uint8_t RemoteControlHasReceivedFrame(void)
+{
+    return rc_frame_received;
 }

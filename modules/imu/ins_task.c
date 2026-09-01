@@ -77,6 +77,8 @@ static void InitQuaternion(float *init_q4)
         init_q4[i + 1] = axis_rot[i] * sinf(angle / 2.0f); // 轴角公式,第三轴为0(没有z轴分量)
 }
 
+static volatile uint8_t ins_ready = 0;
+
 attitude_t *INS_Init(void)
 {
     if (!INS.init)
@@ -166,6 +168,7 @@ void INS_Task(void)
         INS.Pitch = QEKF_INS.Pitch;
         INS.Roll = QEKF_INS.Roll;
         INS.YawTotalAngle = QEKF_INS.YawTotalAngle;
+        ins_ready = 1;
 
         VisionSetAltitude(INS.Yaw, INS.Pitch, INS.Roll);
     }
@@ -181,6 +184,11 @@ void INS_Task(void)
     {
         // 1Hz 可以加入monitor函数,检查IMU是否正常运行/离线
     }
+}
+
+uint8_t INS_IsReady(void)
+{
+    return ins_ready;
 }
 
 /**

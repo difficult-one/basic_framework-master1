@@ -146,6 +146,7 @@ modules/referee/rm_referee.c \
 modules/referee/referee_UI.c \
 modules/referee/referee_task.c \
 modules/remote/remote_control.c \
+modules/remote/remote_control_protocol.c \
 modules/super_cap/super_cap.c \
 modules/power_meter/power_meter.c \
 modules/can_comm/can_comm.c \
@@ -156,6 +157,7 @@ application/gimbal/gimbal.c \
 application/chassis/chassis.c \
 application/shoot/shoot.c \
 application/cmd/robot_cmd.c \
+application/infantry_control.c \
 application/robot.c
 
 # CXX sources

@@ -27,6 +27,7 @@
 #include "arm_math.h"
 #include "bsp_usart.h"
 #include "usart.h"
+#include "infantry_control.h"
 #include <stdio.h>
 
 /* 根据robot_def.h中的macro自动计算的参数 */
@@ -118,15 +119,36 @@ static void FormatMotorFeedback(const DJIMotorInstance *motor,
 
 static void ChassisPrintMotorFeedbackUART2(void)
 {
+    DJIMotorInstance *selected_motor = motor_lf;
+    const char *wheel_name = "LF";
+    float target_speed_aps = vt_lf;
+#if CHASSIS_WHEEL_TEST_MODE == CHASSIS_WHEEL_TEST_ENABLE
+#if CHASSIS_WHEEL_TEST_TARGET == CHASSIS_WHEEL_TEST_RF
+    selected_motor = motor_rf;
+    wheel_name = "RF";
+    target_speed_aps = vt_rf;
+#elif CHASSIS_WHEEL_TEST_TARGET == CHASSIS_WHEEL_TEST_LB
+    selected_motor = motor_lb;
+    wheel_name = "LB";
+    target_speed_aps = vt_lb;
+#elif CHASSIS_WHEEL_TEST_TARGET == CHASSIS_WHEEL_TEST_RB
+    selected_motor = motor_rb;
+    wheel_name = "RB";
+    target_speed_aps = vt_rb;
+#endif
+#endif
+
+    char target_rpm[16];
     char speed_rpm[16];
     char current_a[16];
-    char msg[96];
+    char msg[128];
 
-    FormatMotorFeedback(motor_lf, speed_rpm, sizeof(speed_rpm), current_a, sizeof(current_a));
+    FormatFloat3(target_rpm, sizeof(target_rpm), target_speed_aps / 6.0f);
+    FormatMotorFeedback(selected_motor, speed_rpm, sizeof(speed_rpm), current_a, sizeof(current_a));
 
     const int len = snprintf(msg, sizeof(msg),
-                             "M1 speed=%s rpm current=%s A\r\n",
-                             speed_rpm, current_a);
+                             "wheel=%s target=%s rpm speed=%s rpm current=%s A\r\n",
+                             wheel_name, target_rpm, speed_rpm, current_a);
     if (len > 0)
     {
         const uint16_t tx_len = (len < (int)sizeof(msg)) ? (uint16_t)len : (uint16_t)(sizeof(msg) - 1);
@@ -138,7 +160,7 @@ void ChassisInit()
 {
     // 四个轮子的参数一样,改tx_id和反转标志位即可
     Motor_Init_Config_s chassis_motor_config = {
-        .can_init_config.can_handle = &hcan1,
+        .can_init_config.can_handle = CHASSIS_MOTOR_CAN_HANDLE,
         .controller_param_init_config = {
             .speed_PID = {
                 .Kp = 4.5, // 4.5
@@ -162,7 +184,7 @@ void ChassisInit()
             .outer_loop_type = SPEED_LOOP, // 设置为开环，电机设定值由下面的功率控制设定，不走普通的pid
             .close_loop_type = SPEED_LOOP|CURRENT_LOOP, // 速度环+电流环 双环串级
         },
-        .motor_type = M3508,
+        .motor_type = CHASSIS_MOTOR_TYPE,
     };
     //  @todo: 当前还没有设置电机的正反转,仍然需要手动添加reference的正负号,需要电机module的支持,待修改.
     chassis_motor_config.can_init_config.tx_id = CHASSIS_MOTOR_LF_ID;
@@ -184,6 +206,10 @@ void ChassisInit()
     chassis_motor_config.controller_setting_init_config.motor_reverse_flag =
         CHASSIS_MOTOR_RB_REVERSE ? MOTOR_DIRECTION_REVERSE : MOTOR_DIRECTION_NORMAL;
     motor_rb =DJIMotorInit(&chassis_motor_config);
+    DJIMotorStop(motor_lf);
+    DJIMotorStop(motor_rf);
+    DJIMotorStop(motor_lb);
+    DJIMotorStop(motor_rb);
 
 #if STEERING_DRIVE
     Motor_Init_Config_s steering_motor_config = {
@@ -226,6 +252,10 @@ void ChassisInit()
     steer_lb = DJIMotorInit(&steering_motor_config);
     steering_motor_config.can_init_config.tx_id = STEERING_MOTOR_RB_ID;
     steer_rb = DJIMotorInit(&steering_motor_config);
+    DJIMotorStop(steer_lf);
+    DJIMotorStop(steer_rf);
+    DJIMotorStop(steer_lb);
+    DJIMotorStop(steer_rb);
 #endif
 
     referee_data = UITaskInit(&huart6, &ui_data); // 裁判系统初始化,会同时初始化UI
@@ -322,10 +352,17 @@ void ChassisInit()
  */
 static void MecanumCalculate()
 {
-    vt_lf = -chassis_vx - chassis_vy - chassis_cmd_recv.wz * LF_CENTER;
-    vt_rf = -chassis_vx + chassis_vy - chassis_cmd_recv.wz * RF_CENTER;
-    vt_lb = chassis_vx - chassis_vy - chassis_cmd_recv.wz * LB_CENTER;
-    vt_rb = chassis_vx + chassis_vy - chassis_cmd_recv.wz * RB_CENTER;
+    InfantryMecanumCalculate(chassis_vx,
+                             chassis_vy,
+                             chassis_cmd_recv.wz,
+                             LF_CENTER,
+                             RF_CENTER,
+                             LB_CENTER,
+                             RB_CENTER,
+                             &vt_lf,
+                             &vt_rf,
+                             &vt_lb,
+                             &vt_rb);
 }
 
 #if OMNI_DRIVE
@@ -492,12 +529,37 @@ SubGetMessage(chassis_sub, &chassis_cmd_recv);
     if (!isfinite(power_meter_data.power_w))
         power_meter_online = 0;
 
+    const uint8_t drive_ready_states[4] = {
+        DJIMotorIsOnline(motor_lf),
+        DJIMotorIsOnline(motor_rf),
+        DJIMotorIsOnline(motor_lb),
+        DJIMotorIsOnline(motor_rb),
+    };
+    uint8_t chassis_hardware_ready = InfantryAllReady(drive_ready_states, 4);
+#if STEERING_DRIVE
+    const uint8_t steering_ready_states[4] = {
+        DJIMotorIsOnline(steer_lf),
+        DJIMotorIsOnline(steer_rf),
+        DJIMotorIsOnline(steer_lb),
+        DJIMotorIsOnline(steer_rb),
+    };
+    chassis_hardware_ready = chassis_hardware_ready &&
+        InfantryAllReady(steering_ready_states, 4);
+#endif
+    if (!chassis_hardware_ready)
+        chassis_cmd_recv.chassis_mode = CHASSIS_ZERO_FORCE;
+
 #if CHASSIS_WHEEL_TEST_MODE == CHASSIS_WHEEL_TEST_ENABLE
-    chassis_cmd_recv.chassis_mode = CHASSIS_NO_FOLLOW;
-    chassis_cmd_recv.vx = 0.0f;
-    chassis_cmd_recv.vy = 0.0f;
-    chassis_cmd_recv.wz = 0.0f;
-    chassis_cmd_recv.offset_angle = 0.0f;
+    const uint8_t wheel_test_allowed = InfantryWheelTestAllowed(
+        (uint8_t)chassis_cmd_recv.chassis_mode);
+    if (wheel_test_allowed)
+    {
+        chassis_cmd_recv.chassis_mode = CHASSIS_NO_FOLLOW;
+        chassis_cmd_recv.vx = 0.0f;
+        chassis_cmd_recv.vy = 0.0f;
+        chassis_cmd_recv.wz = 0.0f;
+        chassis_cmd_recv.offset_angle = 0.0f;
+    }
 #endif
 
     const RefereePowerSnapshot referee_power = RefereeGetPowerSnapshot();
@@ -562,58 +624,84 @@ SubGetMessage(chassis_sub, &chassis_cmd_recv);
 #endif
     }
 
-    // 根据 offset_angle 变化率估算底盘实际角速度, 供云台 yaw 前馈
+    // 根据有效 offset_angle 的连续变化率估算底盘实际角速度，供云台 yaw 前馈。
+    float actual_chassis_wz = 0.0f;
     {
         static float last_wz_offset = 0, last_wz_time = 0;
+        static uint8_t rate_initialized = 0;
         float now = DWT_GetTimeline_ms();
-        float dt = now - last_wz_time;
-        if (dt > 1.0f)
+        const uint8_t rate_needed =
+            chassis_cmd_recv.chassis_mode == CHASSIS_FOLLOW_GIMBAL_YAW ||
+            chassis_cmd_recv.chassis_mode == CHASSIS_ROTATE;
+        if (!rate_needed)
         {
-            float delta = chassis_cmd_recv.offset_angle - last_wz_offset;
-            if (delta > 180.0f)  delta -= 360.0f;
-            if (delta < -180.0f) delta += 360.0f;
-            chassis_wz_for_gimbal = delta / dt * 1000.0f;
+            rate_initialized = 0;
+            chassis_wz_for_gimbal = 0.0f;
         }
-        last_wz_offset = chassis_cmd_recv.offset_angle;
-        last_wz_time = now;
+        else if (!rate_initialized)
+        {
+            last_wz_offset = chassis_cmd_recv.offset_angle;
+            last_wz_time = now;
+            rate_initialized = 1;
+            chassis_wz_for_gimbal = 0.0f;
+        }
+        else
+        {
+            const float dt = now - last_wz_time;
+            if (dt > 1.0f)
+            {
+                float delta = chassis_cmd_recv.offset_angle - last_wz_offset;
+                if (delta > 180.0f)  delta -= 360.0f;
+                if (delta < -180.0f) delta += 360.0f;
+                actual_chassis_wz = delta / dt * 1000.0f;
+                chassis_wz_for_gimbal = actual_chassis_wz;
+                last_wz_offset = chassis_cmd_recv.offset_angle;
+                last_wz_time = now;
+            }
+        }
     }
 
     // 根据控制模式设定旋转速度
+    static float rotate_last_time = 0.0f;
+    static float rotate_iout = 0.0f;
+    static uint8_t rotate_initialized = 0;
+    if (chassis_cmd_recv.chassis_mode != CHASSIS_ROTATE)
+    {
+        rotate_last_time = 0.0f;
+        rotate_iout = 0.0f;
+        rotate_initialized = 0;
+    }
     switch (chassis_cmd_recv.chassis_mode)
     {
     case CHASSIS_NO_FOLLOW: // 底盘不旋转,但维持全向机动,一般用于调整云台姿态
         chassis_cmd_recv.wz = 0;
         break;
     case CHASSIS_FOLLOW_GIMBAL_YAW: // 跟随云台,不单独设置pid,以误差角度平方为速度输出
-        chassis_cmd_recv.wz = -1.5f * chassis_cmd_recv.offset_angle * abs(chassis_cmd_recv.offset_angle);
+        chassis_cmd_recv.wz = -1.5f * chassis_cmd_recv.offset_angle * fabsf(chassis_cmd_recv.offset_angle);
          LIMIT_MIN_MAX(chassis_cmd_recv.wz, -800, 800);  // 限制最大旋转速度
         break;
     case CHASSIS_ROTATE: // 自旋,同时保持全向机动;用 offset_angle 变化率做旋转闭环
     {
-        static float last_offset = 0, last_time = 0, rot_iout = 0;
         float now = DWT_GetTimeline_ms();
-        float dt = now - last_time;
-
-        // offset_angle 变化率 = 底盘真实转速(云台被IMU锁在空间不动)
-        float actual_wz = 0;
-        if (dt > 1.0f)
+        float dt = now - rotate_last_time;
+        if (!rotate_initialized)
         {
-            float delta = chassis_cmd_recv.offset_angle - last_offset;
-            if (delta > 180.0f)  delta -= 360.0f;   // 处理 ±180° 跳变
-            if (delta < -180.0f) delta += 360.0f;
-            actual_wz = delta / dt * 1000.0f;        // °/s
+            rotate_iout = 0.0f;
+            dt = 0.0f;
+            rotate_initialized = 1;
         }
 
-        // PI 闭环: 目标 1000°/s, 实际不够就加输出, 超了就减
-        float error = 1000.0f - actual_wz;
+        const float error = CHASSIS_ROTATE_TARGET_WZ - actual_chassis_wz;
         float kp = 3.0f, ki = 0.3f;
-        rot_iout += error * dt * ki * 0.001f;
-        LIMIT_MIN_MAX(rot_iout, -500, 500);
+        rotate_iout += error * dt * ki * 0.001f;
+        LIMIT_MIN_MAX(rotate_iout, -500, 500);
 
-        chassis_cmd_recv.wz = 1000.0f + kp * error + rot_iout;
+        chassis_cmd_recv.wz = CHASSIS_ROTATE_TARGET_WZ + kp * error + rotate_iout;
+        LIMIT_MIN_MAX(chassis_cmd_recv.wz,
+                      -CHASSIS_ROTATE_OUTPUT_MAX_WZ,
+                      CHASSIS_ROTATE_OUTPUT_MAX_WZ);
 
-        last_offset = chassis_cmd_recv.offset_angle;
-        last_time = now;
+        rotate_last_time = now;
         break;
     }
     default:
@@ -664,15 +752,22 @@ SubGetMessage(chassis_sub, &chassis_cmd_recv);
     vt_lb = 0.0f;
     vt_rb = 0.0f;
 #if CHASSIS_WHEEL_TEST_TARGET == CHASSIS_WHEEL_TEST_LF
-    vt_lf = CHASSIS_WHEEL_TEST_SPEED;
+    if (wheel_test_allowed) vt_lf = CHASSIS_WHEEL_TEST_SPEED;
 #elif CHASSIS_WHEEL_TEST_TARGET == CHASSIS_WHEEL_TEST_RF
-    vt_rf = CHASSIS_WHEEL_TEST_SPEED;
+    if (wheel_test_allowed) vt_rf = CHASSIS_WHEEL_TEST_SPEED;
 #elif CHASSIS_WHEEL_TEST_TARGET == CHASSIS_WHEEL_TEST_LB
-    vt_lb = CHASSIS_WHEEL_TEST_SPEED;
+    if (wheel_test_allowed) vt_lb = CHASSIS_WHEEL_TEST_SPEED;
 #elif CHASSIS_WHEEL_TEST_TARGET == CHASSIS_WHEEL_TEST_RB
-    vt_rb = CHASSIS_WHEEL_TEST_SPEED;
+    if (wheel_test_allowed) vt_rb = CHASSIS_WHEEL_TEST_SPEED;
 #endif
 #endif
+
+    float wheel_speeds[4] = {vt_lf, vt_rf, vt_lb, vt_rb};
+    InfantryLimitWheelSpeeds(wheel_speeds, CHASSIS_MAX_WHEEL_SPEED_APS);
+    vt_lf = wheel_speeds[0];
+    vt_rf = wheel_speeds[1];
+    vt_lb = wheel_speeds[2];
+    vt_rb = wheel_speeds[3];
 
    
     // 根据裁判系统的反馈数据和电容数据对输出限幅并设定闭环参考值

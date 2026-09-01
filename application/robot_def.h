@@ -21,11 +21,38 @@
 #define PITCH_HORIZON_ECD 3412  //pitch水平时的编码器的值
 #define PITCH_MAX_ANGLE 0  //pitch最大角度限制（先占位但不引用）
 #define PITCH_MIN_ANGLE 0  //pitch最小角度设置（先占位但不引用）
+#define GIMBAL_PITCH_SAFE_RANGE_DEG 15.0f // 首次联调时以上电姿态为中心的临时软限位
+
+// Gimbal motor configuration
+#define GIMBAL_YAW_MOTOR_CAN_HANDLE (&hcan1)
+#define GIMBAL_PITCH_MOTOR_CAN_HANDLE (&hcan2)
+#define GIMBAL_MOTOR_TYPE GM6020
+#define GIMBAL_YAW_MOTOR_ID 1
+#define GIMBAL_PITCH_MOTOR_ID 2
+#define GIMBAL_YAW_MOTOR_REVERSE 0
+#define GIMBAL_PITCH_MOTOR_REVERSE 0
 
 // Shooter parameters
-#define ONE_BULLET_DELTA_ANGLE 36  //拨盘发一发弹丸转过的角度
-#define REDUCTION_RATIO_LOADER 19.0f  //拨盘电机减速比
+#define REDUCTION_RATIO_LOADER 36.0f  // M2006拨盘电机减速比
 #define NUM_PER_CIRCLE 10  //拨盘一圈装弹量
+
+// Shooter motor configuration and no-projectile commissioning speeds (deg/s)
+#define FRICTION_MOTOR_LEFT_ID 1
+#define FRICTION_MOTOR_RIGHT_ID 2
+#define FRICTION_MOTOR_CAN_HANDLE (&hcan2)
+#define FRICTION_MOTOR_TYPE M3508
+#define FRICTION_MOTOR_LEFT_REVERSE 0
+#define FRICTION_MOTOR_RIGHT_REVERSE 1
+#define FRICTION_SPEED_15_APS 5000.0f
+#define FRICTION_SPEED_18_APS 6000.0f
+#define FRICTION_SPEED_30_APS 8000.0f
+#define FRICTION_READY_TOLERANCE_APS 300.0f
+#define FRICTION_READY_HOLD_MS 300.0f
+#define LOADER_MOTOR_ID 6
+#define LOADER_MOTOR_CAN_HANDLE (&hcan1)
+#define LOADER_MOTOR_TYPE M2006
+#define LOADER_MOTOR_REVERSE 0
+#define LOADER_SINGLE_SHOT_DEAD_TIME_MS 150.0f
 
 // Chassis geometry, unit: mm
 #define WHEEL_BASE 350  //纵向轴距
@@ -50,6 +77,8 @@ extern float chassis_wz_for_gimbal;
 #endif
 
 // Chassis motor CAN IDs
+#define CHASSIS_MOTOR_CAN_HANDLE (&hcan1)
+#define CHASSIS_MOTOR_TYPE M3508
 #define CHASSIS_MOTOR_LF_ID 1
 #define CHASSIS_MOTOR_RF_ID 2
 #define CHASSIS_MOTOR_LB_ID 4
@@ -85,6 +114,10 @@ extern float chassis_wz_for_gimbal;
 #define CHASSIS_DRIVE_STEERING 2 // 四舵轮底盘
 #define CHASSIS_DRIVE_TYPE CHASSIS_DRIVE_MECANUM    //底盘的类型
 #define CHASSIS_CMD_DIR_TRIM_DEG 0.0f   //坐标系方向修正角
+#define CHASSIS_MAX_TRANSLATION_SPEED_APS 6000.0f // 100%档位平移速度上限
+#define CHASSIS_MAX_WHEEL_SPEED_APS 6000.0f       // 运动学解算后的单轮速度上限
+#define CHASSIS_ROTATE_TARGET_WZ 1000.0f          // 小陀螺目标角速度(°/s)
+#define CHASSIS_ROTATE_OUTPUT_MAX_WZ 1200.0f      // 小陀螺闭环输出上限(°/s)
 
 // Steering chassis parameters
 #define STEERING_MOTOR_LF_ID 1
@@ -231,12 +264,13 @@ typedef struct
 {
     attitude_t gimbal_imu_data;                // 云台 IMU 姿态数据（Yaw/Pitch/Roll + 角速度）
     uint16_t yaw_motor_single_round_angle;     // yaw 电机单圈编码器角度（0~360°）
+    uint8_t gimbal_ready;                      // IMU可用且yaw/pitch电机反馈在线
 } Gimbal_Upload_Data_s;
 
 // 发射回传的反馈数据结构体
 typedef struct
 {
-    // Reserved for future feedback fields.
+    uint8_t friction_ready; // 两侧摩擦轮已达到目标并保持稳定
 } Shoot_Upload_Data_s;
 
 #pragma pack()  // 恢复默认对齐方式

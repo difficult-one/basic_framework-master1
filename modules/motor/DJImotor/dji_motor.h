@@ -86,6 +86,7 @@ typedef struct
     Motor_Working_Type_e stop_flag; // 启停标志
 
     DaemonInstance* daemon;
+    uint8_t feedback_received; // 至少收到过一帧有效CAN反馈
     uint32_t feed_cnt;
     float dt;
 
@@ -154,6 +155,11 @@ void DJIMotorStop(DJIMotorInstance *motor);
  *
  */
 void DJIMotorEnable(DJIMotorInstance *motor);
+
+/**
+ * @brief 电机是否已经收到反馈且当前未被守护进程判定为离线
+ */
+uint8_t DJIMotorIsOnline(const DJIMotorInstance *motor);
 
 /**
  * @brief 修改电机闭环目标(外层闭环)

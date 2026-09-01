@@ -5,6 +5,7 @@
 #include "dji_motor.h"
 #include "general_def.h"
 #include "ins_task.h"
+#include "infantry_control.h"
 #include "master_process.h"
 #include "message_center.h"
 #include "remote_control.h"
@@ -57,6 +58,9 @@ static Shoot_Upload_Data_s shoot_fetch_data;
 
 static Robot_Status_e robot_state;
 static Robot_Control_Mode_e robot_control_mode;
+static InfantryGimbalTargets gimbal_targets;
+static float gimbal_yaw_increment;
+static float gimbal_pitch_increment;
 
 BMI088Instance *bmi088_test;
 BMI088_Data_t bmi088_data;
@@ -140,8 +144,8 @@ static void SetChassisFromRemote(void)
 
 static void SetGimbalFromRemote(void)
 {
-    gimbal_cmd_send.yaw += RC_GIMBAL_YAW_SCALE * (float)Deadband(rc_data[TEMP].rc.rocker_l_);
-    gimbal_cmd_send.pitch += RC_GIMBAL_PITCH_SCALE * (float)Deadband(rc_data[TEMP].rc.rocker_l1);
+    gimbal_yaw_increment += RC_GIMBAL_YAW_SCALE * (float)Deadband(rc_data[TEMP].rc.rocker_l_);
+    gimbal_pitch_increment += RC_GIMBAL_PITCH_SCALE * (float)Deadband(rc_data[TEMP].rc.rocker_l1);
 }
 
 static void SetChassisFromKeyboard(void)
@@ -184,8 +188,8 @@ static void SetChassisFromKeyboard(void)
 
 static void SetGimbalFromMouse(void)
 {
-    gimbal_cmd_send.yaw += MOUSE_GIMBAL_YAW_SCALE * (float)rc_data[TEMP].mouse.x;
-    gimbal_cmd_send.pitch -= MOUSE_GIMBAL_PITCH_SCALE * (float)rc_data[TEMP].mouse.y;
+    gimbal_yaw_increment += MOUSE_GIMBAL_YAW_SCALE * (float)rc_data[TEMP].mouse.x;
+    gimbal_pitch_increment -= MOUSE_GIMBAL_PITCH_SCALE * (float)rc_data[TEMP].mouse.y;
 }
 
 static void SetShootFromMouseKey(void)
@@ -290,8 +294,8 @@ static void VisionAutoSet(void)
     if (vision_recv_data != NULL && vision_recv_data->target_state != NO_TARGET)
     {
         has_target = 1;
-        gimbal_cmd_send.yaw += vision_recv_data->yaw;
-        gimbal_cmd_send.pitch += vision_recv_data->pitch;
+        gimbal_yaw_increment += vision_recv_data->yaw;
+        gimbal_pitch_increment += vision_recv_data->pitch;
     }
     else
     {
@@ -317,9 +321,12 @@ static void VisionAutoSet(void)
 
 static void EmergencyHandler(void)
 {
-    if (rc_data == NULL || !RemoteControlIsOnline())
+    if (rc_data == NULL || !InfantryControlLinkReady(
+                               RemoteControlHasReceivedFrame(),
+                               RemoteControlIsOnline()))
     {
         robot_state = ROBOT_STOP;
+        InfantryGimbalTargetsReset(&gimbal_targets);
         StopAllCommand();
         return;
     }
@@ -335,7 +342,39 @@ static void EmergencyHandler(void)
 #endif
 
     if (robot_state == ROBOT_STOP)
+    {
+        InfantryGimbalTargetsReset(&gimbal_targets);
         StopAllCommand();
+    }
+}
+
+static void ApplyGimbalSafety(void)
+{
+    if (!gimbal_fetch_data.gimbal_ready)
+        InfantryGimbalTargetsReset(&gimbal_targets);
+
+    const uint8_t targets_ready = InfantryGimbalTargetsStep(
+        &gimbal_targets,
+        gimbal_fetch_data.gimbal_ready,
+        gimbal_fetch_data.gimbal_imu_data.YawTotalAngle,
+        gimbal_fetch_data.gimbal_imu_data.Pitch,
+        gimbal_yaw_increment,
+        gimbal_pitch_increment,
+        GIMBAL_PITCH_SAFE_RANGE_DEG);
+
+    if (targets_ready)
+    {
+        gimbal_cmd_send.yaw = gimbal_targets.yaw;
+        gimbal_cmd_send.pitch = gimbal_targets.pitch;
+    }
+    else
+    {
+        gimbal_cmd_send.gimbal_mode = GIMBAL_ZERO_FORCE;
+    }
+
+    chassis_cmd_send.chassis_mode = (chassis_mode_e)InfantrySafeChassisMode(
+        (uint8_t)chassis_cmd_send.chassis_mode,
+        targets_ready);
 }
 
 void RobotCMDInit(void)
@@ -380,6 +419,7 @@ void RobotCMDInit(void)
     shoot_cmd_send.friction_mode = FRICTION_OFF;
     shoot_cmd_send.bullet_speed = SMALL_AMU_15;
     shoot_cmd_send.shoot_rate = 0.0f;
+    InfantryGimbalTargetsReset(&gimbal_targets);
 
     (void)PITCH_HORIZON_ANGLE;
 }
@@ -398,6 +438,8 @@ void RobotCMDTask(void)
     CalcOffsetAngle();
     robot_control_mode = SelectControlMode();
     ResetCommandDefaults();
+    gimbal_yaw_increment = 0.0f;
+    gimbal_pitch_increment = 0.0f;
 
     switch (robot_control_mode)
     {
@@ -413,6 +455,12 @@ void RobotCMDTask(void)
         break;
     }
 
+    InfantryLimitChassisVector(
+        &chassis_cmd_send.vx,
+        &chassis_cmd_send.vy,
+        CHASSIS_MAX_TRANSLATION_SPEED_APS *
+            (float)chassis_cmd_send.chassis_speed_buff / 100.0f);
+    ApplyGimbalSafety();
     EmergencyHandler();
 
 #ifdef ONE_BOARD
