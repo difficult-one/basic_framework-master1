@@ -392,6 +392,7 @@ void ChassisPower_Update(void)
         m->power_data.predict_power_w         = (float)motor_power[i]->predict_not_limit_power;
         m->power_data.predict_power_after_w   = (float)motor_power[i]->predict_power;
         m->power_data.power_budget_w          = (float)power_limit_for_motor;
+        m->power_data.real_power_w            = status.measured_power_w;
     }
 
     if (steering_motor_count > 0)
@@ -414,6 +415,7 @@ void ChassisPower_Update(void)
             m->power_data.predict_power_w = (float)pm->predict_not_limit_power;
             m->power_data.predict_power_after_w = (float)pm->predict_power;
             m->power_data.power_budget_w = (float)steering_power_per_motor;
+            m->power_data.real_power_w = status.measured_power_w;
         }
     }
 }
@@ -571,6 +573,7 @@ void SingleMotorPower_Limit(DJIMotorInstance *motor, int slot, float power_budge
     motor->power_data.predict_power_w         = (float)pm->predict_not_limit_power;
     motor->power_data.predict_power_after_w   = (float)pm->predict_power;
     motor->power_data.power_budget_w          = power_budget_w;
+    motor->power_data.real_power_w            = feedback_status.measured_power_w;
 }
 
 // ==================== 嵌入式C++桩函数 ====================

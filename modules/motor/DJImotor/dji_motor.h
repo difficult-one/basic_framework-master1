@@ -42,6 +42,7 @@ typedef struct
     float current_a;              // 真实电流 (A) = real_current / 换算系数
     float speed_rpm;              // 转速 (RPM) = speed_aps / 6.0
     float power_budget_w;         // 该电机分到的功率预算 (W)
+    float real_power_w;           // 功率计(或裁判)实测真实功率 (W)，功率管理器更新
 } Motor_Power_Data_s;
 
 /* 电机实时运行数据，供调试和串口打印 */
